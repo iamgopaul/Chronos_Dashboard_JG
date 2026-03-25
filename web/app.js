@@ -1,4 +1,6 @@
 (function () {
+  var uploadedFile = null;
+
   function apiUrl(path) {
     var b = (typeof window !== "undefined" && window.API_BASE) ? String(window.API_BASE).replace(/\/$/, "") : "";
     var p = path.charAt(0) === "/" ? path : "/" + path;
@@ -45,6 +47,12 @@
   syncRunMode();
 
   csvInput.addEventListener("change", function () {
+    uploadedFile = csvInput.files && csvInput.files.length ? csvInput.files[0] : null;
+    // Clear config defaults until the next preview (so stale bounds don't apply)
+    var ds = document.getElementById("dateStart");
+    var de = document.getElementById("dateEnd");
+    if (ds) ds.value = "";
+    if (de) de.value = "";
     btnPreview.disabled = !csvInput.files || !csvInput.files.length;
     btnRun.disabled = !csvInput.files || !csvInput.files.length;
   });
@@ -88,6 +96,37 @@
       categoryCol.appendChild(o);
     });
     btnLoadCats.disabled = !categoryCol.value || !csvInput.files.length;
+
+    // Auto-fill date filters to the full dataset range using selected time column
+    await autoFillTimeBounds();
+  });
+
+  async function autoFillTimeBounds() {
+    if (!uploadedFile) return;
+    if (!timeCol.value) return;
+
+    var ds = document.getElementById("dateStart");
+    var de = document.getElementById("dateEnd");
+    if (!ds || !de) return;
+
+    var fd = new FormData();
+    fd.append("file", uploadedFile);
+    fd.append("time_col", timeCol.value);
+    // Keep UI responsive; if it fails, leave blanks and let the backend error naturally.
+    var r = await fetch(apiUrl("/api/time-bounds"), { method: "POST", body: fd });
+    var j = await r.json();
+    if (!r.ok) {
+      document.getElementById("status").textContent = (j && j.detail) ? j.detail : "Failed to compute time bounds.";
+      return;
+    }
+
+    ds.value = j.min_date || "";
+    de.value = j.max_date || "";
+  }
+
+  timeCol.addEventListener("change", function () {
+    if (!uploadedFile) return;
+    autoFillTimeBounds();
   });
 
   btnLoadCats.addEventListener("click", async function () {

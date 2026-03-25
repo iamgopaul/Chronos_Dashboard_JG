@@ -12,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+import pandas as pd
+
 from app.chronos_service import run_chronos_on_prepared
 from app.data_prep import filter_raw_dataframe, prepare_series, read_csv_bytes
 
@@ -68,6 +70,39 @@ async def preview(file: UploadFile = File(...)):
         "columns": list(df.columns),
         "rows": int(len(df)),
         "sample": df.head(8).to_dict(orient="records"),
+    }
+
+
+@app.post("/api/time-bounds")
+async def time_bounds(
+    file: UploadFile = File(...),
+    time_col: str = Form(...),
+):
+    """
+    Compute min/max dates (YYYY-MM-DD) from the uploaded CSV for the selected time column.
+    Used to auto-fill the UI so the default subset is the full dataset.
+    """
+    raw = await file.read()
+    try:
+        df = read_csv_bytes(raw)
+    except Exception as e:
+        raise HTTPException(400, f"Could not parse CSV: {e}") from e
+
+    if time_col not in df.columns:
+        raise HTTPException(400, f"Missing time column: {time_col}")
+
+    t = pd.to_datetime(df[time_col], errors="coerce")
+    t = t.dropna()
+    if t.empty:
+        raise HTTPException(400, f"Could not parse any valid dates from column: {time_col}")
+
+    min_dt = t.min().normalize()
+    max_dt = t.max().normalize()
+    return {
+        "time_col": time_col,
+        "min_date": min_dt.strftime("%Y-%m-%d"),
+        "max_date": max_dt.strftime("%Y-%m-%d"),
+        "n_valid_dates": int(len(t)),
     }
 
 
