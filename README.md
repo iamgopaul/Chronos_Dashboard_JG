@@ -22,7 +22,7 @@ Open `http://localhost:8000`. The UI is served from `web/`; `window.API_BASE` in
 
 PyTorch + Chronos are **too large** for typical Vercel serverless functions. Deploy:
 
-1. **API**: use the [Dockerfile](Dockerfile) on **Render**, **Fly.io**, **Google Cloud Run**, **Railway** (API-only), etc. Set `CORS_ORIGINS` to your Vercel URL (comma-separated if multiple). Example: `CORS_ORIGINS=https://your-app.vercel.app`
+1. **API**: use the [Dockerfile](Dockerfile) on **Render**, **Fly.io**, **Google Cloud Run**, **Railway** (API-only), etc. Allocate **≥ 4 GB RAM** for PyTorch + Chronos-Bolt on CPU (more if you run large panels). Set `CORS_ORIGINS` to your Vercel URL (comma-separated if multiple). Example: `CORS_ORIGINS=https://your-app.vercel.app`
 
 2. **UI**: in the Vercel dashboard, set the project **root directory** to `web` (or deploy the `web` folder as a static site). Before build, set `web/config.js` to point at your API, e.g.:
 
