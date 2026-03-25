@@ -5,11 +5,54 @@ from __future__ import annotations
 import io
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 
 def read_csv_bytes(data: bytes, encoding: str = "utf-8") -> pd.DataFrame:
     return pd.read_csv(io.BytesIO(data), encoding=encoding)
+
+
+def filter_raw_dataframe(
+    df: pd.DataFrame,
+    *,
+    time_col: str,
+    date_start: Optional[str] = None,
+    date_end: Optional[str] = None,
+    category_col: Optional[str] = None,
+    category_values: Optional[list[str]] = None,
+    id_col: Optional[str] = None,
+    item_ids_allowlist: Optional[list[str]] = None,
+) -> pd.DataFrame:
+    """
+    Subset raw CSV rows before prepare_series.
+    Date bounds are inclusive on both ends (calendar day).
+    """
+    out = df.copy()
+    if time_col not in out.columns:
+        raise ValueError(f"Missing time column: {time_col}")
+
+    t = pd.to_datetime(out[time_col], errors="coerce")
+    if date_start:
+        ds = pd.Timestamp(date_start).normalize()
+        out = out.loc[t >= ds]
+        t = pd.to_datetime(out[time_col], errors="coerce")
+    if date_end:
+        de = pd.Timestamp(date_end).normalize() + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+        out = out.loc[t <= de]
+    if category_col and category_values:
+        if category_col not in out.columns:
+            raise ValueError(f"Missing category column: {category_col}")
+        vals = {str(v).strip() for v in category_values if str(v).strip()}
+        if vals:
+            out = out[out[category_col].astype(str).isin(vals)]
+    if id_col and item_ids_allowlist:
+        if id_col not in out.columns:
+            raise ValueError(f"Missing id column: {id_col}")
+        allow = {str(x).strip() for x in item_ids_allowlist if str(x).strip()}
+        if allow:
+            out = out[out[id_col].astype(str).isin(allow)]
+    return out.reset_index(drop=True)
 
 
 def prepare_series(

@@ -3,27 +3,58 @@
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.data_prep import prepare_series, read_csv_bytes
 from app.chronos_service import run_chronos_on_prepared
+from app.data_prep import filter_raw_dataframe, prepare_series, read_csv_bytes
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Chronos Dashboard", version="0.1.0")
+app = FastAPI(title="Chronos Dashboard", version="0.2.0")
 
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+_origins = os.environ.get("CORS_ORIGINS", "*")
+_allow = [o.strip() for o in _origins.split(",") if o.strip()] or ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allow,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+def _parse_list(s: str) -> list[str]:
+    s = (s or "").strip()
+    if not s:
+        return []
+    return [x.strip() for x in s.replace("\n", ",").split(",") if x.strip()]
 
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    with open("app/templates/index.html", encoding="utf-8") as f:
-        return HTMLResponse(f.read())
+    p = Path("web/index.html")
+    if p.exists():
+        return HTMLResponse(p.read_text(encoding="utf-8"))
+    p2 = Path("app/templates/index.html")
+    return HTMLResponse(p2.read_text(encoding="utf-8"))
+
+
+@app.get("/config.js")
+def config_js():
+    p = Path("web/config.js")
+    if p.exists():
+        return FileResponse(p, media_type="application/javascript")
+    return HTMLResponse(
+        "window.API_BASE = '';", media_type="application/javascript"
+    )
 
 
 @app.post("/api/preview")
@@ -40,6 +71,25 @@ async def preview(file: UploadFile = File(...)):
     }
 
 
+@app.post("/api/column-values")
+async def column_values(
+    file: UploadFile = File(...),
+    column: str = Form(...),
+    limit: int = Form(200),
+):
+    raw = await file.read()
+    try:
+        df = read_csv_bytes(raw)
+    except Exception as e:
+        raise HTTPException(400, f"Could not parse CSV: {e}") from e
+    if column not in df.columns:
+        raise HTTPException(400, f"Missing column: {column}")
+    ser = df[column].dropna().astype(str)
+    uniq = ser.unique().tolist()
+    uniq.sort(key=lambda x: (len(str(x)), str(x)))
+    return {"column": column, "values": uniq[: max(1, min(limit, 2000))], "total_unique": len(uniq)}
+
+
 @app.post("/api/forecast")
 async def forecast(
     file: UploadFile = File(...),
@@ -48,10 +98,16 @@ async def forecast(
     id_col: str = Form(""),
     freq: str = Form(""),
     model_id: str = Form("amazon/chronos-bolt-base"),
-    eval_mode: Literal["rolling", "direct"] = Form("rolling"),
+    run_mode: Literal["rolling", "direct", "forecast_only"] = Form("rolling"),
     rolling_windows: int = Form(8),
     direct_horizon: int = Form(8),
+    forecast_horizon: int = Form(8),
     winsorize: bool = Form(False),
+    date_start: str = Form(""),
+    date_end: str = Form(""),
+    item_ids: str = Form(""),
+    category_col: str = Form(""),
+    category_values: str = Form(""),
 ):
     raw = await file.read()
     try:
@@ -66,6 +122,29 @@ async def forecast(
     freq_clean = (freq or "").strip() or None
     if id_col_clean and id_col_clean not in df.columns:
         raise HTTPException(400, f"Missing id column: {id_col_clean}")
+
+    cat_col = (category_col or "").strip() or None
+    cats = _parse_list(category_values)
+    if cat_col and cat_col not in df.columns:
+        raise HTTPException(400, f"Missing category column: {cat_col}")
+
+    items_allow = _parse_list(item_ids)
+    ds = (date_start or "").strip() or None
+    de = (date_end or "").strip() or None
+
+    try:
+        df = filter_raw_dataframe(
+            df,
+            time_col=time_col,
+            date_start=ds,
+            date_end=de,
+            category_col=cat_col,
+            category_values=cats or None,
+            id_col=id_col_clean,
+            item_ids_allowlist=items_allow or None,
+        )
+    except Exception as e:
+        raise HTTPException(400, f"Filter failed: {e}") from e
 
     wz = (0.01, 0.99) if winsorize else None
     try:
@@ -91,9 +170,11 @@ async def forecast(
         out = run_chronos_on_prepared(
             long_df,
             model_id=model_id,
-            eval_mode=eval_mode,
+            run_mode=run_mode,
             rolling_windows=max(1, rolling_windows),
             direct_horizon=max(1, direct_horizon),
+            forecast_horizon=max(1, forecast_horizon),
+            freq=freq_clean,
             quantile_levels=[0.1, 0.5, 0.9],
         )
     except Exception as e:
@@ -102,7 +183,7 @@ async def forecast(
 
     return {
         "model_id": model_id,
-        "eval_mode": eval_mode,
+        "run_mode": run_mode,
         "series_count": int(long_df["item_id"].nunique()),
         "observations": int(len(long_df)),
         **out,
@@ -112,3 +193,9 @@ async def forecast(
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+if Path("web").exists():
+    app.mount("/static", StaticFiles(directory="web"), name="webstatic")
+else:
+    app.mount("/static", StaticFiles(directory="app/static"), name="legacy_static")

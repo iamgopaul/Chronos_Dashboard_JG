@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chronos Dashboard</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <script src="/static/config.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Chronos-Bolt</h1>
+    <p class="sub">Zero-shot forecasts from your CSV. UI can live on Vercel; run the FastAPI service separately (PyTorch + model).</p>
+  </header>
+
+  <section class="card">
+    <h2>1. Data</h2>
+    <input type="file" id="csv" accept=".csv" />
+    <button type="button" class="primary" id="btnPreview" disabled>Preview columns</button>
+    <div id="preview" class="muted"></div>
+  </section>
+
+  <section class="card">
+    <h2>2. Column mapping</h2>
+    <label>Time column <select id="timeCol"></select></label>
+    <label>Target column <select id="targetCol"></select></label>
+    <label>Series ID (firms / panels) <select id="idCol"><option value="">— single series —</option></select></label>
+    <label>Pandas frequency (recommended for dated x-axis on direct / full-context), e.g. <code>QE</code>
+      <input id="freq" type="text" placeholder="QE or ME" /></label>
+    <label class="inline"><input type="checkbox" id="winsorize" /> Winsorize target at 1% / 99%</label>
+  </section>
+
+  <section class="card collapsed" id="configCard">
+    <h2>Configuration <button type="button" class="toggle" id="btnToggleCfg">show</button></h2>
+    <div class="collapsible-body">
+      <div class="row2">
+        <label>Start date (inclusive) <input id="dateStart" type="date" /></label>
+        <label>End date (inclusive) <input id="dateEnd" type="date" /></label>
+      </div>
+      <label>Restrict series IDs (comma or newline separated; matches ID column)
+        <textarea id="itemIds" placeholder="001234, 005678"></textarea></label>
+      <label>Category column <select id="categoryCol"><option value="">— none —</option></select></label>
+      <button type="button" id="btnLoadCats" disabled>Load category values</button>
+      <div id="categoryBox" class="cat-pick hidden"></div>
+      <p class="muted">Select checkboxes to keep only those categories. Leave empty to use all.</p>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>3. Evaluation</h2>
+    <label>Run mode
+      <select id="runMode">
+        <option value="rolling">Backtest: rolling one-step (last N points)</option>
+        <option value="direct">Backtest: direct multi-step (hold out last h)</option>
+        <option value="forecast_only">Full-context forecast (no holdout; not “training”)</option>
+      </select>
+    </label>
+    <label id="lblRolling">Rolling windows (N) <input id="rollingWindows" type="number" min="1" value="8" /></label>
+    <label id="lblDirect" class="hidden">Direct holdout horizon (h) <input id="directHorizon" type="number" min="1" value="8" /></label>
+    <label id="lblForecastOnly" class="hidden">Forecast horizon (steps ahead) <input id="forecastHorizon" type="number" min="1" value="8" /></label>
+    <label>Hugging Face model id <input id="modelId" type="text" value="amazon/chronos-bolt-base" /></label>
+  </section>
+
+  <section class="card">
+    <button type="button" class="primary" id="btnRun" disabled>Run Chronos</button>
+    <p id="status" class="muted"></p>
+  </section>
+
+  <section class="card hidden" id="outSection">
+    <h2>Results</h2>
+    <label id="lblItemPick" class="hidden">Series <select id="itemSelect"></select></label>
+    <pre id="metrics"></pre>
+    <div id="chartMain" class="chart-box"></div>
+    <div id="chartAnalysis" class="chart-box"></div>
+    <div class="table-wrap"><table id="tbl"><thead></thead><tbody></tbody></table></div>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
