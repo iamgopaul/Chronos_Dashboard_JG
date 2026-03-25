@@ -1,2 +1,2 @@
-/* Set API base when UI is on Vercel (scheme, no trailing slash). */
+/* Optional: set API base when UI is hosted separately (scheme, no trailing slash). */
 window.API_BASE = "";

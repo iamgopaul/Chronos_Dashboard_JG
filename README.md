@@ -18,19 +18,24 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 Open `http://localhost:8000`. The UI is served from `web/`; `window.API_BASE` in `web/config.js` defaults to `""` (same origin).
 
-## Split deploy: Vercel (UI) + API host
+## Deploy on Railway
 
-PyTorch + Chronos are **too large** for typical Vercel serverless functions. Deploy:
+Use Railway for the full app (FastAPI + UI together via this repo).
 
-1. **API**: use the [Dockerfile](Dockerfile) on **Render**, **Fly.io**, **Google Cloud Run**, **Railway** (API-only), etc. Allocate **≥ 4 GB RAM** for PyTorch + Chronos-Bolt on CPU (more if you run large panels). Set `CORS_ORIGINS` to your Vercel URL (comma-separated if multiple). Example: `CORS_ORIGINS=https://your-app.vercel.app`
+1. Create a Railway service from this repository (Dockerfile is included).
+2. Set memory to **at least 4 GB RAM** for PyTorch + Chronos-Bolt on CPU (more for large panel datasets).
+3. Railway provides `PORT` automatically; the container already binds to `${PORT}`.
+4. Optional: set `HF_TOKEN` if you use gated/private Hugging Face models.
 
-2. **UI**: in the Vercel dashboard, set the project **root directory** to `web` (or deploy the `web` folder as a static site). Before build, set `web/config.js` to point at your API, e.g.:
+### Optional split deployment (still possible)
 
-   ```js
-   window.API_BASE = "https://your-api.onrender.com";
-   ```
+If you later want to host the static UI elsewhere, keep `web/config.js` and set:
 
-   (No trailing slash.) You can automate this with a Vercel build step that writes `config.js` from an environment variable.
+```js
+window.API_BASE = "https://your-railway-api-url";
+```
+
+(No trailing slash.)
 
 ## Configuration options (UI)
 
