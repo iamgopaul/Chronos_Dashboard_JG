@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chronos Dashboard</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Chronos-Bolt</h1>
+    <p class="sub">Upload a CSV, map columns, run zero-shot probabilistic forecasts (no ARIMA).</p>
+  </header>
+
+  <section class="card">
+    <h2>1. Data</h2>
+    <input type="file" id="csv" accept=".csv" />
+    <button type="button" id="btnPreview" disabled>Preview columns</button>
+    <div id="preview" class="muted"></div>
+  </section>
+
+  <section class="card">
+    <h2>2. Column mapping</h2>
+    <label>Time column <select id="timeCol"></select></label>
+    <label>Target column <select id="targetCol"></select></label>
+    <label>Series ID (optional, for panels) <select id="idCol"><option value="">— single series —</option></select></label>
+    <label>Pandas frequency (optional, e.g. <code>QE</code> for quarter-end) <input id="freq" type="text" placeholder="QE or ME" /></label>
+    <label class="inline"><input type="checkbox" id="winsorize" /> Winsorize target at 1% / 99%</label>
+  </section>
+
+  <section class="card">
+    <h2>3. Evaluation</h2>
+    <label>Mode
+      <select id="evalMode">
+        <option value="rolling">Rolling one-step (last N points)</option>
+        <option value="direct">Direct multi-step (one forecast of length h)</option>
+      </select>
+    </label>
+    <label id="lblRolling">Rolling windows <input id="rollingWindows" type="number" min="1" value="8" /></label>
+    <label id="lblDirect" class="hidden">Horizon (steps) <input id="directHorizon" type="number" min="1" value="8" /></label>
+    <label>Hugging Face model id <input id="modelId" type="text" value="amazon/chronos-bolt-base" style="width:100%;max-width:28rem" /></label>
+  </section>
+
+  <section class="card">
+    <button type="button" id="btnRun" disabled>Run Chronos</button>
+    <p id="status" class="muted"></p>
+  </section>
+
+  <section class="card hidden" id="outSection">
+    <h2>Results</h2>
+    <pre id="metrics"></pre>
+    <div class="table-wrap"><table id="tbl"><thead></thead><tbody></tbody></table></div>
+  </section>
+
+  <script>
+    const csvInput = document.getElementById('csv');
+    const btnPreview = document.getElementById('btnPreview');
+    const btnRun = document.getElementById('btnRun');
+    const previewEl = document.getElementById('preview');
+    const timeCol = document.getElementById('timeCol');
+    const targetCol = document.getElementById('targetCol');
+    const idCol = document.getElementById('idCol');
+    const evalMode = document.getElementById('evalMode');
+    const lblRolling = document.getElementById('lblRolling');
+    const lblDirect = document.getElementById('lblDirect');
+
+    csvInput.addEventListener('change', () => {
+      btnPreview.disabled = !csvInput.files?.length;
+      btnRun.disabled = !csvInput.files?.length;
+    });
+    evalMode.addEventListener('change', () => {
+      const d = evalMode.value === 'direct';
+      lblDirect.classList.toggle('hidden', !d);
+      lblRolling.classList.toggle('hidden', d);
+    });
+
+    function fillSelect(sel, cols, keepFirst) {
+      sel.innerHTML = '';
+      cols.forEach((c, i) => {
+        const o = document.createElement('option');
+        o.value = c;
+        o.textContent = c;
+        sel.appendChild(o);
+      });
+      if (keepFirst && sel.options.length) sel.selectedIndex = 0;
+    }
+
+    btnPreview.addEventListener('click', async () => {
+      const fd = new FormData();
+      fd.append('file', csvInput.files[0]);
+      previewEl.textContent = 'Loading…';
+      const r = await fetch('/api/preview', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) {
+        previewEl.textContent = j.detail || 'Error';
+        return;
+      }
+      previewEl.textContent = `${j.rows} rows · ${j.columns.length} columns`;
+      const cols = j.columns;
+      fillSelect(timeCol, cols);
+      fillSelect(targetCol, cols);
+      if (targetCol.options.length > 1) targetCol.selectedIndex = 1;
+      idCol.innerHTML = '<option value="">— single series —</option>';
+      cols.forEach((c) => {
+        const o = document.createElement('option');
+        o.value = c;
+        o.textContent = c;
+        idCol.appendChild(o);
+      });
+    });
+
+    btnRun.addEventListener('click', async () => {
+      const status = document.getElementById('status');
+      const outSection = document.getElementById('outSection');
+      status.textContent = 'Loading model & forecasting (first run downloads weights)…';
+      outSection.classList.add('hidden');
+      const fd = new FormData();
+      fd.append('file', csvInput.files[0]);
+      fd.append('time_col', timeCol.value);
+      fd.append('target_col', targetCol.value);
+      fd.append('id_col', idCol.value || '');
+      fd.append('freq', document.getElementById('freq').value.trim());
+      fd.append('model_id', document.getElementById('modelId').value.trim());
+      fd.append('eval_mode', evalMode.value);
+      fd.append('rolling_windows', document.getElementById('rollingWindows').value);
+      fd.append('direct_horizon', document.getElementById('directHorizon').value);
+      fd.append('winsorize', document.getElementById('winsorize').checked);
+      const r = await fetch('/api/forecast', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) {
+        status.textContent = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+        return;
+      }
+      status.textContent = 'Done.';
+      outSection.classList.remove('hidden');
+      document.getElementById('metrics').textContent = JSON.stringify(j.aggregate ?? j.items?.[0]?.metrics, null, 2);
+      const tbody = document.querySelector('#tbl tbody');
+      const thead = document.querySelector('#tbl thead');
+      tbody.innerHTML = '';
+      thead.innerHTML = '';
+      const rows = j.items?.[0]?.forecasts || [];
+      if (rows.length) {
+        const keys = Object.keys(rows[0]);
+        const trh = document.createElement('tr');
+        keys.forEach((k) => {
+          const th = document.createElement('th');
+          th.textContent = k;
+          trh.appendChild(th);
+        });
+        thead.appendChild(trh);
+        rows.forEach((row) => {
+          const tr = document.createElement('tr');
+          keys.forEach((k) => {
+            const td = document.createElement('td');
+            const v = row[k];
+            td.textContent = typeof v === 'number' ? (Math.round(v * 1e6) / 1e6).toString() : v;
+            tr.appendChild(td);
+        });
+          tbody.appendChild(tr);
+        });
+      }
+    });
+  </script>
+</body>
+</html>

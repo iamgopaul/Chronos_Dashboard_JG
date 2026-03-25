@@ -1,0 +1,11 @@
+# Chronos dashboard — CPU-friendly stack (Railway). Use GPU images locally if needed.
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+pandas>=2.0.0
+numpy>=1.24.0
+torch>=2.1.0
+transformers>=4.36.0
+accelerate>=0.26.0
+safetensors>=0.4.0
+chronos-forecasting>=2.2.0
