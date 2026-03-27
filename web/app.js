@@ -30,6 +30,44 @@
     });
   }
 
+  function setSelectByValue(sel, val) {
+    if (!val || !sel || !sel.options) return;
+    for (var i = 0; i < sel.options.length; i++) {
+      if (sel.options[i].value === val) {
+        sel.selectedIndex = i;
+        return;
+      }
+    }
+  }
+
+  function pickTimeColumnByName(cols, sug) {
+    if (sug && sug.time_col) setSelectByValue(timeCol, sug.time_col);
+    if (sug && sug.time_col && timeCol.value === sug.time_col) return;
+    var map = {};
+    cols.forEach(function (c) { map[String(c).toLowerCase()] = c; });
+    var hints = ["datadate", "date", "prcdate", "mthcaldt"];
+    for (var i = 0; i < hints.length; i++) {
+      if (map[hints[i]]) {
+        setSelectByValue(timeCol, map[hints[i]]);
+        return;
+      }
+    }
+  }
+
+  function pickTargetColumnByName(cols, sug) {
+    if (sug && sug.target_col) setSelectByValue(targetCol, sug.target_col);
+    if (sug && sug.target_col && targetCol.value === sug.target_col) return;
+    var map = {};
+    cols.forEach(function (c) { map[String(c).toLowerCase()] = c; });
+    var hints = ["roa", "roe", "niq", "saleq"];
+    for (var i = 0; i < hints.length; i++) {
+      if (map[hints[i]]) {
+        setSelectByValue(targetCol, map[hints[i]]);
+        return;
+      }
+    }
+  }
+
   function syncRunMode() {
     var m = runMode.value;
     document.getElementById("lblRolling").classList.toggle("hidden", m !== "rolling");
@@ -42,6 +80,40 @@
     c.classList.toggle("collapsed");
     this.textContent = c.classList.contains("collapsed") ? "show" : "hide";
   };
+
+  var btnToggleProtocol = document.getElementById("btnToggleProtocol");
+  if (btnToggleProtocol) {
+    btnToggleProtocol.onclick = function () {
+      var c = document.getElementById("protocolCard");
+      c.classList.toggle("collapsed");
+      this.textContent = c.classList.contains("collapsed") ? "show" : "hide";
+    };
+  }
+
+  var btnHoldout2023 = document.getElementById("btnHoldout2023");
+  if (btnHoldout2023) {
+    btnHoldout2023.onclick = async function () {
+      var ds = document.getElementById("dateStart");
+      var de = document.getElementById("dateEnd");
+      if (ds) ds.value = "";
+      if (de) de.value = "";
+      runMode.value = "rolling";
+      var rw = document.getElementById("rollingWindows");
+      if (rw) rw.value = "8";
+      syncRunMode();
+      var cfg = document.getElementById("configCard");
+      var btnCfg = document.getElementById("btnToggleCfg");
+      if (cfg) cfg.classList.remove("collapsed");
+      if (btnCfg) btnCfg.textContent = "hide";
+      if (uploadedFile && timeCol.value) {
+        await autoFillTimeBounds();
+      }
+      var st = document.getElementById("status");
+      if (st) {
+        st.textContent = "Proposal preset: rolling one-step, N=8, date filters cleared. Preview columns first so full datadate range fills; then Run Chronos.";
+      }
+    };
+  }
 
   runMode.addEventListener("change", syncRunMode);
   syncRunMode();
@@ -67,6 +139,7 @@
   });
 
   btnPreview.addEventListener("click", async function () {
+    uploadedFile = csvInput.files && csvInput.files[0] ? csvInput.files[0] : null;
     var fd = new FormData();
     fd.append("file", csvInput.files[0]);
     previewEl.textContent = "Loading…";
@@ -76,11 +149,12 @@
       previewEl.textContent = (typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail)) || "Error";
       return;
     }
-    previewEl.textContent = j.rows + " rows · " + j.columns.length + " columns";
+    var note = j.rows + " rows · " + j.columns.length + " columns";
+    if (j.suggested_note) note += " — " + j.suggested_note;
+    previewEl.textContent = note;
     var cols = j.columns;
     fillSelect(timeCol, cols);
     fillSelect(targetCol, cols);
-    if (targetCol.options.length > 1) targetCol.selectedIndex = 1;
     idCol.innerHTML = '<option value="">— single series —</option>';
     cols.forEach(function (c) {
       var o = document.createElement("option");
@@ -88,6 +162,12 @@
       o.textContent = c;
       idCol.appendChild(o);
     });
+    var sug = j.suggested || {};
+    pickTimeColumnByName(cols, sug);
+    pickTargetColumnByName(cols, sug);
+    if (sug.id_col) setSelectByValue(idCol, sug.id_col);
+    var freqEl = document.getElementById("freq");
+    if (freqEl && typeof sug.freq === "string" && sug.freq) freqEl.value = sug.freq;
     categoryCol.innerHTML = '<option value="">— none —</option>';
     cols.forEach(function (c) {
       var o = document.createElement("option");
@@ -97,8 +177,16 @@
     });
     btnLoadCats.disabled = !categoryCol.value || !csvInput.files.length;
 
-    // Auto-fill date filters to the full dataset range using selected time column
-    await autoFillTimeBounds();
+    var st = document.getElementById("status");
+    if (j.time_bounds && j.time_bounds.min_date && j.time_bounds.max_date) {
+      var d0 = document.getElementById("dateStart");
+      var d1 = document.getElementById("dateEnd");
+      if (d0) d0.value = j.time_bounds.min_date;
+      if (d1) d1.value = j.time_bounds.max_date;
+      if (st) st.textContent = "";
+    } else {
+      await autoFillTimeBounds();
+    }
   });
 
   async function autoFillTimeBounds() {
@@ -116,7 +204,9 @@
     var r = await fetch(apiUrl("/api/time-bounds"), { method: "POST", body: fd });
     var j = await r.json();
     if (!r.ok) {
-      document.getElementById("status").textContent = (j && j.detail) ? j.detail : "Failed to compute time bounds.";
+      var detail = (j && j.detail) ? j.detail : "Failed to compute time bounds.";
+      if (typeof detail === "object") detail = JSON.stringify(detail);
+      document.getElementById("status").textContent = detail;
       return;
     }
 

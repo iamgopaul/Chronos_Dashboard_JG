@@ -78,4 +78,17 @@ code { font-size: 0.85em; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
 @media (max-width: 700px) { .row2 { grid-template-columns: 1fr; } }
 .cat-pick { max-height: 8rem; overflow: auto; border: 1px solid #2a3544; border-radius: 6px; padding: 0.35rem; }
+.protocol-list { margin: 0.6rem 0 0 1rem; padding: 0; }
+.protocol-list li { margin: 0.35rem 0; }
+#btnHoldout2023 {
+  margin-top: 0.25rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #2a3544;
+  background: #0f1419;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+#btnHoldout2023:hover { border-color: var(--accent); color: var(--accent); }
 .cat-pick label { margin: 0.15rem 0; }

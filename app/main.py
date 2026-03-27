@@ -9,13 +9,20 @@ from typing import Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import pandas as pd
 
 from app.chronos_service import run_chronos_on_prepared
-from app.data_prep import filter_raw_dataframe, prepare_series, read_csv_bytes
+from app.column_suggest import suggest_mapping, time_column_try_order
+from app.data_prep import (
+    filter_raw_dataframe,
+    parse_datetime_column,
+    prepare_series,
+    read_csv_bytes,
+    time_bounds_for_column,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,6 +38,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return Response(status_code=204)
 
 
 def _parse_list(s: str) -> list[str]:
@@ -66,10 +78,27 @@ async def preview(file: UploadFile = File(...)):
         df = read_csv_bytes(raw)
     except Exception as e:
         raise HTTPException(400, f"Could not parse CSV: {e}") from e
+    suggested = suggest_mapping(df)
+    time_bounds = None
+    for tc in time_column_try_order(df, suggested.get("time_col")):
+        time_bounds = time_bounds_for_column(df, tc)
+        if time_bounds:
+            if tc != suggested.get("time_col"):
+                suggested = {**suggested, "time_col": tc}
+            break
+
     return {
         "columns": list(df.columns),
         "rows": int(len(df)),
         "sample": df.head(8).to_dict(orient="records"),
+        "suggested": {
+            "time_col": suggested["time_col"],
+            "target_col": suggested["target_col"],
+            "id_col": suggested["id_col"],
+            "freq": suggested["freq"],
+        },
+        "suggested_note": suggested.get("note") or "",
+        "time_bounds": time_bounds,
     }
 
 
@@ -91,10 +120,14 @@ async def time_bounds(
     if time_col not in df.columns:
         raise HTTPException(400, f"Missing time column: {time_col}")
 
-    t = pd.to_datetime(df[time_col], errors="coerce")
+    t = parse_datetime_column(df[time_col])
     t = t.dropna()
     if t.empty:
-        raise HTTPException(400, f"Could not parse any valid dates from column: {time_col}")
+        raise HTTPException(
+            400,
+            f"Could not parse any valid dates from column: {time_col}. "
+            "Pick the calendar date column (e.g. datadate), not fiscal year alone.",
+        )
 
     min_dt = t.min().normalize()
     max_dt = t.max().normalize()

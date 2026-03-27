@@ -3,14 +3,49 @@
 from __future__ import annotations
 
 import io
-from typing import Optional
+import warnings
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
 
 
+def parse_datetime_column(series: pd.Series) -> pd.Series:
+    """
+    Parse date columns from CSV (e.g. WRDS datadate as 1/31/2010).
+    Uses format='mixed' (pandas 2+) so mixed strings do not trigger inference warnings.
+    """
+    s = series
+    if pd.api.types.is_datetime64_any_dtype(s):
+        return pd.to_datetime(s, errors="coerce")
+    try:
+        return pd.to_datetime(s, errors="coerce", format="mixed")
+    except (ValueError, TypeError):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            return pd.to_datetime(s, errors="coerce")
+
+
+def time_bounds_for_column(df: pd.DataFrame, time_col: str) -> Optional[dict[str, Any]]:
+    """Min/max calendar dates for a column, or None if nothing parses."""
+    if time_col not in df.columns:
+        return None
+    t = parse_datetime_column(df[time_col]).dropna()
+    if t.empty:
+        return None
+    min_dt = t.min().normalize()
+    max_dt = t.max().normalize()
+    return {
+        "time_col": time_col,
+        "min_date": min_dt.strftime("%Y-%m-%d"),
+        "max_date": max_dt.strftime("%Y-%m-%d"),
+        "n_valid_dates": int(len(t)),
+    }
+
+
 def read_csv_bytes(data: bytes, encoding: str = "utf-8") -> pd.DataFrame:
-    return pd.read_csv(io.BytesIO(data), encoding=encoding)
+    # Large WRDS exports: avoid mixed-type column inference splitting rows incorrectly
+    return pd.read_csv(io.BytesIO(data), encoding=encoding, low_memory=False)
 
 
 def filter_raw_dataframe(
@@ -32,11 +67,11 @@ def filter_raw_dataframe(
     if time_col not in out.columns:
         raise ValueError(f"Missing time column: {time_col}")
 
-    t = pd.to_datetime(out[time_col], errors="coerce")
+    t = parse_datetime_column(out[time_col])
     if date_start:
         ds = pd.Timestamp(date_start).normalize()
         out = out.loc[t >= ds]
-        t = pd.to_datetime(out[time_col], errors="coerce")
+        t = parse_datetime_column(out[time_col])
     if date_end:
         de = pd.Timestamp(date_end).normalize() + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
         out = out.loc[t <= de]
@@ -74,9 +109,28 @@ def prepare_series(
         use["_item"] = "series"
         id_col = "_item"
 
-    use[time_col] = pd.to_datetime(use[time_col], errors="coerce")
+    use[time_col] = parse_datetime_column(use[time_col])
+    n_before = len(use)
     use[target_col] = pd.to_numeric(use[target_col], errors="coerce")
+    n_numeric = use[target_col].notna().sum()
     use = use.dropna(subset=[time_col, target_col])
+
+    if use.empty:
+        hint = ""
+        if n_numeric == 0 and n_before > 0:
+            hint = (
+                f" Target column {target_col!r} has no numeric values after conversion. "
+                "On WRDS/Compustat, pick a numeric ratio (e.g. ROA from niq/atq), not status codes like "
+                "'costat' (active/inactive letters)."
+            )
+        elif n_before > 0:
+            hint = (
+                f" Only {n_numeric}/{n_before} rows had a numeric {target_col!r}; "
+                f"or dates in {time_col!r} did not parse. Check column types."
+            )
+        raise ValueError(
+            "No valid rows after parsing time and numeric target." + hint
+        )
 
     if winsorize_pct:
         lo, hi = winsorize_pct
@@ -96,7 +150,15 @@ def prepare_series(
         else:
             g = g.rename(columns={time_col: "timestamp", target_col: "target"})
         g["item_id"] = str(item)
-        parts.append(g[["item_id", "timestamp", "target"]])
+        if not g.empty:
+            parts.append(g[["item_id", "timestamp", "target"]])
+
+    if not parts:
+        raise ValueError(
+            "No series could be built after grouping/resampling. "
+            "If this is panel data (many firms), set Series ID to gvkey (or similar). "
+            "If using frequency (QE), ensure datadate parses as dates."
+        )
 
     out = pd.concat(parts, ignore_index=True)
     out = out.sort_values(["item_id", "timestamp"])

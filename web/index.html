@@ -11,7 +11,7 @@
 <body>
   <header>
     <h1>Chronos-Bolt</h1>
-    <p class="sub">Zero-shot forecasts from your CSV, ready to deploy on Railway (API + UI together).</p>
+    <p class="sub">Zero-shot Chronos-Bolt tournament slice for WRDS/Compustat panels—P10/P50/P90, MASE / sMAPE / WQL—aligned with the Arima-Chronos research protocol (deploy on Railway with API + UI).</p>
   </header>
 
   <section class="card">
@@ -23,12 +23,28 @@
 
   <section class="card">
     <h2>2. Column mapping</h2>
+    <p class="muted">WRDS / Compustat-style files: Preview columns auto-fills <code>datadate</code>, <code>gvkey</code>, <code>ROA</code> (or ROE), and <code>QE</code> when present. <code>costat</code> is a status code, not a numeric target.</p>
     <label>Time column <select id="timeCol"></select></label>
     <label>Target column <select id="targetCol"></select></label>
     <label>Series ID (firms / panels) <select id="idCol"><option value="">— single series —</option></select></label>
     <label>Pandas frequency (recommended for dated x-axis on direct / full-context), e.g. <code>QE</code>
       <input id="freq" type="text" placeholder="QE or ME" /></label>
-    <label class="inline"><input type="checkbox" id="winsorize" /> Winsorize target at 1% / 99%</label>
+    <label class="inline"><input type="checkbox" id="winsorize" /> Winsorize target at 1% / 99% (cross-sectional caps in SPSS; here: per-series after filters)</label>
+  </section>
+
+  <section class="card collapsed" id="protocolCard">
+    <h2>Research protocol <button type="button" class="toggle" id="btnToggleProtocol">show</button></h2>
+    <div class="collapsible-body">
+      <p class="muted">Matches the project sequence: WRDS <code>fundq</code>-style extracts → long panel with <code>item_id</code>=<code>gvkey</code>, <code>timestamp</code>=<code>datadate</code>, <code>target</code>=ROA or ROE (ratio scale, e.g. 0.05 not 5). Chronos-Bolt Base is zero-shot (no fine-tuning). Outputs include probabilistic bands (P10–P90) and the same error metrics cited in the proposal (MASE, sMAPE, WQL).</p>
+      <ul class="muted protocol-list">
+        <li>Quarterly alignment: set frequency to <code>QE</code>; censor M&amp;A targets in WRDS before export when following the censored-series rule (<code>dlrsn</code>).</li>
+        <li>Chronos context must include years before the evaluation window—do <em>not</em> narrow Configuration dates to 2023–2024 only (that drops pre-2023 history). Leave dates empty or use the full range from Preview; rolling one-step with <code>N</code>=8 evaluates the last eight quarters in your filtered series (often 2023–2024 if the panel ends in 2024).</li>
+        <li>NLI, Bai–Perron/ruptures, and Auto-ARIMA benchmarks run outside this app (R/Python/SPSS per your Data Preparation &amp; ARIMA docs); export the cleaned CSV and use this UI for the Chronos leg of the tournament.</li>
+      </ul>
+      <p>
+        <button type="button" id="btnHoldout2023">Proposal preset: rolling one-step, <code>N</code>=8, full date range (clears date filters)</button>
+      </p>
+    </div>
   </section>
 
   <section class="card collapsed" id="configCard">
